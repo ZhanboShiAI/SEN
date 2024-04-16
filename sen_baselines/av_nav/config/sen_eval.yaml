@@ -1,0 +1,10 @@
+BASE_TASK_CONFIG_PATH: "configs/sound_eventnav/av_nav/sound_eventgoal_binaural.yaml"
+NUM_PROCESSES: 10
+SENSORS: ["DEPTH_SENSOR", "RGB_SENSOR"]
+TEST_EPISODE_COUNT: 500
+VIDEO_OPTION: []
+VISUALIZATION_OPTION: []
+
+EVAL:
+  SPLIT: "val"
+  USE_CKPT_CONFIG: True
