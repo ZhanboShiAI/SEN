@@ -1,6 +1,6 @@
 BASE_TASK_CONFIG_PATH: "configs/sound_eventnav/av_nav/sound_eventgoal_ambisonic.yaml"
 TRAINER_NAME: "AVNavDDPPOAmbisonicTrainer"
-NUM_PROCESSES: 32
+NUM_PROCESSES: 24
 SENSORS: ["DEPTH_SENSOR", "RGB_SENSOR"]
 NUM_UPDATES: 40000
 LOG_INTERVAL: 10
@@ -19,7 +19,7 @@ RL:
     eps: 1e-5
     max_grad_norm: 0.2
     # decide the length of history that ppo encodes
-    num_steps: 150
+    num_steps: 50
     hidden_size: 512
     use_gae: True
     gamma: 0.99
@@ -33,7 +33,7 @@ RL:
     use_belief_predictor: True
     use_external_memory: True
     SCENE_MEMORY_TRANSFORMER:
-      memory_size: 150
+      memory_size: 50
       hidden_size: 256
       nhead: 8
       num_encoder_layers: 1

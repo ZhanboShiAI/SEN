@@ -128,6 +128,8 @@ class SoundEventNavSim(Simulator, ABC):
 
         self._eps = 1e-8
 
+        self._audio_buffer = []
+
         self.points, self.graph = load_metadata(self.metadata_dir)
         for node in self.graph.nodes():
             self._position_to_index_mapping[self.position_encoding(self.graph.nodes()[node]['point'])] = node
@@ -164,7 +166,7 @@ class SoundEventNavSim(Simulator, ABC):
         audio_sensor_spec = habitat_sim.AudioSensorSpec()
         audio_sensor_spec.uuid = "audio_sensor"
         audio_sensor_spec.enableMaterials = False
-        if self.config.AUDIO.TYPE in ["mel_foa_iv", "ambisonic"]:
+        if self.config.AUDIO.TYPE in ["mel_foa_iv", "ambisonic", "mel_foa_iv_5len"]:
             audio_sensor_spec.channelLayout.type = habitat_sim.sensor.RLRAudioPropagationChannelLayoutType.Ambisonics
             audio_sensor_spec.channelLayout.channelCount = 4
         elif self.config.AUDIO.TYPE == "binaural":
@@ -462,6 +464,8 @@ class SoundEventNavSim(Simulator, ABC):
             self._audio_interval_lower_limit
         )
 
+        self._audio_buffer = []
+
         is_same_scene = config.SCENE == self._current_scene
         if not is_same_scene:
             self._current_scene = config.SCENE
@@ -734,7 +738,7 @@ class SoundEventNavSim(Simulator, ABC):
         if self.config.AUDIO.TYPE == "binaural":
             nb_channel = 2
             cache_rir_path = self.binaural_rir_dir
-        elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv"]:
+        elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
             nb_channel = 4
             cache_rir_path = self.ambisonic_rir_dir
         else:
@@ -755,7 +759,7 @@ class SoundEventNavSim(Simulator, ABC):
                                                         self._receiver_position_index,
                                                         self._source_position_index,
                                                     ))
-                elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv"]:
+                elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
                     rir_file = os.path.join(cache_rir_path, 
                                                     "irs",
                                                     "{}_{}.wav".format(
@@ -774,10 +778,13 @@ class SoundEventNavSim(Simulator, ABC):
                 if len(rir) == 0:
                     # logging.warning("Empty RIR file at {}".format(rir_file))
                     # rir = np.zeros((sr, nb_channel))
-                    audiogoal = np.zeros((nb_channel, sr))
-                    return audiogoal
+                    if self.config.AUDIO.TYPE == "mel_foa_iv_5len":
+                        rir = np.zeros((sr, nb_channel))
+                    elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "binaural"]:
+                        audiogoal = np.zeros((nb_channel, sr))
+                        return audiogoal
 
-                if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv"]:
+                if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
                     angle = self.azimuth_angle_ambisonic
                     rir = rotate_sh(rir[:, :4], angle, 0, 0)
                 
@@ -833,7 +840,7 @@ class SoundEventNavSim(Simulator, ABC):
                 for channel in range(nb_channel)
             ])
 
-            if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv"]:
+            if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
                 # convert ACN/N3D format to ACN/SN3D format
                 # audiogoal = np.array([
                 #     audiogoal[0, :],
@@ -844,6 +851,15 @@ class SoundEventNavSim(Simulator, ABC):
                 audiogoal = audiogoal / np.array([1, sqrt(3), sqrt(3), sqrt(3)]).reshape(-1, 1)
         
         audiogoal = audiogoal + self._eps
+
+        if self.config.AUDIO.TYPE == "mel_foa_iv_5len":
+            if len(self._audio_buffer) == 0:
+                for _ in range(5):
+                    self._audio_buffer.append(np.zeros((nb_channel, sr)))
+            self._audio_buffer.append(audiogoal)
+            self._audio_buffer.pop(0)
+            audiogoal = np.concatenate(self._audio_buffer, axis=1)
+
         return audiogoal
 
     def get_egomap_observation(self):

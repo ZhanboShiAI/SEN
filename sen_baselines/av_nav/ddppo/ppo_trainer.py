@@ -21,8 +21,8 @@ from ss_baselines.common.env_utils import construct_envs
 from ss_baselines.common.environments import get_env_class
 from ss_baselines.common.rollout_storage import RolloutStorage
 from ss_baselines.common.tensorboard_utils import TensorboardWriter
+from sen_baselines.common.utils import batch_obs
 from ss_baselines.common.utils import (
-    batch_obs,
     generate_video,
     linear_decay,
     plot_top_down_map,

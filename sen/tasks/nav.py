@@ -70,6 +70,8 @@ class SoundEventSpectrogramSensor(Sensor):
             spectrogram = self.compute_spectrogram_binaural(np.ones((2, self._sim.config.AUDIO.RIR_SAMPLING_RATE)))
         elif self._sim.config.AUDIO.TYPE == "mel_foa_iv":
             spectrogram = self.compute_mel_and_foa_intensity_spectrogram(np.ones((4, self._sim.config.AUDIO.RIR_SAMPLING_RATE)))
+        elif self._sim.config.AUDIO.TYPE == "mel_foa_iv_5len":
+            spectrogram = self.compute_mel_and_foa_intensity_spectrogram(np.ones((4, self._sim.config.AUDIO.RIR_SAMPLING_RATE * 5)))
         else:
             raise NotImplementedError(f"Audio type {self._sim.config.AUDIO.TYPE} not supported")
         return spaces.Box(
@@ -202,7 +204,7 @@ class SoundEventSpectrogramSensor(Sensor):
             spectrogram = self._sim.get_current_spectrogram_observation(self.compute_spectrogram_ambisonic)
         elif self._sim.config.AUDIO.TYPE == "binaural":
             spectrogram = self._sim.get_current_spectrogram_observation(self.compute_spectrogram_binaural)
-        elif self._sim.config.AUDIO.TYPE == "mel_foa_iv":
+        elif self._sim.config.AUDIO.TYPE in ["mel_foa_iv", "mel_foa_iv_5len"]:
             spectrogram = self._sim.get_current_spectrogram_observation(self.compute_mel_and_foa_intensity_spectrogram)
         else:
             raise NotImplementedError(f"Audio type {self._sim.config.AUDIO.TYPE} not supported")
