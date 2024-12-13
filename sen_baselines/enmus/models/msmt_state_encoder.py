@@ -19,7 +19,7 @@ class MSMTStateEncoder(nn.Module):
         pose_indices: Optional[Tuple[int, int]] = None,
         pretraining: bool = False,
         norm_first: bool = True,
-        decoder_type: str = "FSMCF",
+        decoder_type: str = "MSMT",
     ):
         super().__init__()
         self._input_size = input_size

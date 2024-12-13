@@ -42,9 +42,9 @@ RL:
       activation: 'relu'
       use_pretrained: True
       actor_critic_pretrained_path: "-1"
-      audio_pretrained_path: 'data/pretrained_weights/semantic_audionav/savi/audio_encoder_best_val.pth'
-      visual_pretrained_path: "data/pretrained_weights/semantic_audionav/savi/visual_encoder_best_val.pth"
-      seld_pretrained_path: "data/pretrained_weights/semantic_audionav/savi/seld_crnn_best_val.h5"
+      audio_pretrained_path: 'data/pretrained_weights/semantic_audionav/enmus/audio_encoder_best_val.pth'
+      visual_pretrained_path: "data/pretrained_weights/semantic_audionav/enmus/visual_encoder_best_val.pth"
+      seld_pretrained_path: "data/pretrained_weights/semantic_audionav/enmus/seld_crnn_best_val.h5"
       freeze_encoders: True
       pretraining: False
       use_belief_encoding: False

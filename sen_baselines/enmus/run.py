@@ -11,6 +11,8 @@ import torch
 from ss_baselines.common.baseline_registry import baseline_registry
 from ss_baselines.savi.config.default import get_config
 
+from sen_baselines.enmus.ppo.msmt_policy import AudioNavMSMTNetWithGD
+
 
 def main():
     parser = argparse.ArgumentParser()

@@ -94,10 +94,10 @@ class CriticHead(nn.Module):
         return self.fc(x)
 
 
-class AudioNavSMCPolicy(Policy):
+class AudioNavMSMTPolicy(Policy):
     def __init__(self, observation_space, action_space, hidden_size=128, **kwargs):
         super().__init__(
-            AudioNavSMCNet(
+            AudioNavMSMTNet(
                 observation_space,
                 action_space,
                 hidden_size=hidden_size,
@@ -107,10 +107,10 @@ class AudioNavSMCPolicy(Policy):
         )
 
 
-class AudioNavSMCPolicyWithGD(Policy):
+class AudioNavMSMTPolicyWithGD(Policy):
     def __init__(self, observation_space, action_space, hidden_size=128, **kwargs):
         super().__init__(
-            AudioNavSMCNetWithGD(
+            AudioNavMSMTNetWithGD(
                 observation_space,
                 action_space,
                 hidden_size=hidden_size,
@@ -141,7 +141,7 @@ class Net(nn.Module, metaclass=abc.ABCMeta):
         pass
 
 
-class AudioNavSMCNet(Net):
+class AudioNavMSMTNet(Net):
     def __init__(
         self,
         observation_space,
@@ -324,7 +324,7 @@ class AudioNavSMCNet(Net):
         return x
     
 
-class AudioNavSMCNetWithGD(Net):
+class AudioNavMSMTNetWithGD(Net):
     def __init__(
         self,
         observation_space,

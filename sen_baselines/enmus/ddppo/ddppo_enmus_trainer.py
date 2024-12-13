@@ -35,7 +35,7 @@ from ss_baselines.savi.ddppo.algo.ddp_utils import (
 from ss_baselines.savi.ddppo.algo.ddppo import DDPPO
 from ss_baselines.savi.ppo.ppo_trainer import PPOTrainer
 
-from sen_baselines.enmus.ppo.msmt_policy import AudioNavSMCPolicyWithGD
+from sen_baselines.enmus.ppo.msmt_policy import AudioNavMSMTPolicyWithGD
 from sen_baselines.enmus.models.rollout_storage_multi_len import RolloutStorageMultiLen, ExternalMemoryMultiLen
 
 
@@ -69,7 +69,7 @@ class DDPPOTrainer(PPOTrainer):
             smt_cfg = ppo_cfg.SCENE_MEMORY_TRANSFORMER
             belief_cfg = ppo_cfg.BELIEF_PREDICTOR
             seld_cfg = ppo_cfg.SELD_ENCODER
-            self.actor_critic = AudioNavSMCPolicyWithGD(
+            self.actor_critic = AudioNavMSMTPolicyWithGD(
                 observation_space=self.envs.observation_spaces[0],
                 action_space=self.envs.action_spaces[0],
                 hidden_size=smt_cfg.hidden_size,
