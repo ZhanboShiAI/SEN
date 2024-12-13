@@ -19,7 +19,6 @@ def merge_sim_episode_config(
     sim_config: Config, episode: Type[Episode]
 ) -> Any:
     sim_config.defrost()
-    # here's where the scene update happens, extract the scene name out of the path
     sim_config.SCENE = episode.scene_id
     sim_config.freeze()
     if (
@@ -40,18 +39,23 @@ def merge_sim_episode_config(
         agent_cfg.SOUND_INTERVAL_UPPER_LIMIT = episode.interval_upper_limit
         agent_cfg.SOUND_INTERVAL_LOWER_LIMIT = episode.interval_lower_limit
 
-        # TODO: Add distractor sound and noise sound
-        # if episode.distractor_sound_id is not None:
-        #     agent_cfg.DISTRACTOR_SOUND_ID = episode.distractor_sound_id
-        #     agent_cfg.DISTRACTOR_POSITION = episode.distractor_position
-        #     agent_cfg.DISTRACTOR_OFFSET = episode.distractor_offset
-        #     agent_cfg.DISTRACTOR_DURATION = episode.distractor_duration
-        #     agent_cfg.DISTRACTOR_INTERVAL_MEAN = episode.distractor_interval_mean
-        #     agent_cfg.DISTRACTOR_INTERVAL_UPPER_LIMIT = episode.distractor_interval_upper_limit
-        #     agent_cfg.DISTRACTOR_INTERVAL_LOWER_LIMIT = episode.distractor_interval_lower_limit
+        if episode.distractor_sound_id is not None:
+            agent_cfg.DISTRACTOR_SOUND_ID = episode.distractor_sound_id
+            agent_cfg.DISTRACTOR_POSITION = episode.distractor["position"]
+            agent_cfg.DISTRACTOR_OFFSET = episode.distractor_offset
+            agent_cfg.DISTRACTOR_DURATION = episode.distractor_duration
+            agent_cfg.DISTRACTOR_INTERVAL_MEAN = episode.distractor_interval_mean
+            agent_cfg.DISTRACTOR_INTERVAL_UPPER_LIMIT = episode.distractor_interval_upper_limit
+            agent_cfg.DISTRACTOR_INTERVAL_LOWER_LIMIT = episode.distractor_interval_lower_limit
         
-        # if episode.noise_sound_id is not None:
-        #     agent_cfg.NOISE_SOUND_ID = episode.noise_sound_id
+        if episode.noise_sound_id is not None:
+            agent_cfg.NOISE_SOUND_ID = episode.noise_sound_id
+            agent_cfg.NOISE_DURATION = episode.noise_duration
+            agent_cfg.NOISE_OFFSET = episode.noise_offset
+            agent_cfg.NOISE_INTERVAL_MEAN = episode.noise_interval_mean
+            agent_cfg.NOISE_INTERVAL_UPPER_LIMIT = episode.noise_interval_upper_limit
+            agent_cfg.NOISE_INTERVAL_LOWER_LIMIT = episode.noise_interval_lower_limit
+            agent_cfg.NOISE_POSITIONS = episode.noise_positions
             
         agent_cfg.IS_SET_START_STATE = True
         agent_cfg.freeze()

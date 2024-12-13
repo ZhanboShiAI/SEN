@@ -1,23 +1,22 @@
-from typing import Any, List, Optional
-from abc import ABC
-from collections import defaultdict, namedtuple
+import os
 import logging
 import pickle
-import os
-
 import librosa
-from scipy.signal import fftconvolve
 import numpy as np
 import networkx as nx
-from gym import spaces
-from spaudiopy.sph import rotate_sh
+
+from abc import ABC
 from math import sqrt
-
+from typing import Any, List, Optional
+from collections import defaultdict, namedtuple
+from gym import spaces
+from scipy.signal import fftconvolve
 from scipy.io import wavfile
+from spaudiopy.sph import rotate_sh
 
-from habitat.core.registry import registry
 import habitat_sim
 from habitat_sim.utils.common import quat_from_angle_axis, quat_from_coeffs, quat_to_angle_axis
+from habitat.core.registry import registry
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
 from habitat.sims.habitat_simulator.habitat_simulator import HabitatSimSensor, overwrite_config
 from habitat.core.simulator import (
@@ -134,24 +133,29 @@ class SoundEventNavSim(Simulator, ABC):
         for node in self.graph.nodes():
             self._position_to_index_mapping[self.position_encoding(self.graph.nodes()[node]['point'])] = node
 
-        # TODO: add support for distractor sound and noise sound
-        # if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
-        #     self._distractor_position_index = None
-        #     self._current_distractor_sound = None
-        #     self._distractor_offset = None
-        #     self._distractor_duration = None
-        #     self._distractor_audio_index = None
-        #     self._distractor_audio_length = None
-        #     self._distractor_interval_mean = None
-        #     self._distractor_interval_upper_limit = None
-        #     self._distractor_interval_lower_limit = None
-        #     self._distractor_sound_interval_determine = None
+        if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
+            self._distractor_position_index = None
+            self._current_distractor_sound = None
+            self._distractor_offset = None
+            self._distractor_duration = None
+            self._distractor_audio_index = None
+            self._distractor_audio_length = None
+            self._distractor_interval_mean = None
+            self._distractor_interval_upper_limit = None
+            self._distractor_interval_lower_limit = None
+            self._distractor_sound_interval_determine = None
 
-        # if self.config.AUDIO.HAS_NOISE:
-        #     self._noise_position_index = None
-        #     self._current_noise_sound = None
-        #     self._noise_audio_index = None
-        #     self._noise_audio_length = None
+        if self.config.AUDIO.HAS_NOISE:
+            self._noise_position_index = None
+            self._current_noise_sound = None
+            self._noise_offset = None
+            self._noise_duration = None
+            self._noise_audio_index = None
+            self._noise_audio_length = None
+            self._noise_interval_mean = None
+            self._noise_interval_upper_limit = None
+            self._noise_interval_lower_limit = None
+            self._noise_sound_interval_determine = None
 
         if self.config.USE_RENDERED_OBSERVATIONS:
             self._sim = DummySimulator()
@@ -166,10 +170,7 @@ class SoundEventNavSim(Simulator, ABC):
         audio_sensor_spec = habitat_sim.AudioSensorSpec()
         audio_sensor_spec.uuid = "audio_sensor"
         audio_sensor_spec.enableMaterials = False
-        if self.config.AUDIO.TYPE in ["mel_foa_iv", "ambisonic", "mel_foa_iv_5len"]:
-            audio_sensor_spec.channelLayout.type = habitat_sim.sensor.RLRAudioPropagationChannelLayoutType.Ambisonics
-            audio_sensor_spec.channelLayout.channelCount = 4
-        elif self.config.AUDIO.TYPE == "binaural":
+        if self.config.AUDIO.TYPE in ["binaural", "diff", "diff_gd"]:
             audio_sensor_spec.channelLayout.type = habitat_sim.sensor.RLRAudioPropagationChannelLayoutType.Binaural
             audio_sensor_spec.channelLayout.channelCount = 2
         else:
@@ -223,15 +224,20 @@ class SoundEventNavSim(Simulator, ABC):
                 "linear_friction",
                 "angular_friction",
                 "coefficient_of_restitution",
+                "distractor_sound_id",
                 "distractor_position",
-                "distractor_sound",
                 "distractor_offset",
                 "distractor_duration",
                 "distractor_interval_mean",
                 "distractor_interval_upper_limit",
                 "distractor_interval_lower_limit",
-                "noise_position",
-                "noise_sound",
+                "noise_sound_id",
+                "noise_duration",
+                "noise_offset",
+                "noise_interval_mean",
+                "noise_interval_upper_limit",
+                "noise_interval_lower_limit",
+                "noise_positions",
             },
         )
 
@@ -245,7 +251,6 @@ class SoundEventNavSim(Simulator, ABC):
                 # These keys are only used by Hab-Lab
                 # or translated into the sensor config manually
                 ignore_keys=sensor._config_ignore_keys,
-                # TODO consider making trans_dict a sensor class var too.
                 trans_dict={
                     "sensor_model_type": lambda v: getattr(
                         habitat_sim.FisheyeSensorModelType, v
@@ -260,9 +265,6 @@ class SoundEventNavSim(Simulator, ABC):
                 sensor.observation_space.shape[:2]
             )
 
-            # TODO(maksymets): Add configure method to Sensor API to avoid
-            # accessing child attributes through parent interface
-            # We know that the Sensor has to be one of these Sensors
             sim_sensor_cfg.sensor_type = sensor.sim_sensor_type
             sim_sensor_cfg.gpu2gpu_transfer = (
                 self.config.HABITAT_SIM_V0.GPU_GPU
@@ -322,11 +324,6 @@ class SoundEventNavSim(Simulator, ABC):
             new_state.position = position
             new_state.rotation = rotation
 
-            # NB: The agent state also contains the sensor states in _absolute_
-            # coordinates. In order to set the agent's body to a specific
-            # location and have the sensors follow, we must not provide any
-            # state for the sensors. This will cause them to follow the agent's
-            # body
             new_state.sensor_states = {}
             agent.set_state(new_state, reset_sensors)
             return True
@@ -357,7 +354,6 @@ class SoundEventNavSim(Simulator, ABC):
 
     @property
     def current_scene_name(self):
-        # config.SCENE (_current_scene) looks like 'data/scene_datasets/replica/office_1/habitat/mesh_semantic.ply'
         return self._current_scene.split('/')[3]
 
     @property
@@ -369,16 +365,15 @@ class SoundEventNavSim(Simulator, ABC):
     def current_source_sound(self):
         return self._source_sound_dict[self._current_sound]
     
-    # @property
-    # def current_distractor_sound(self):
-    #     return self._source_sound_dict[self._current_distractor_sound]
+    @property
+    def current_distractor_sound(self):
+        return self._source_sound_dict[self._current_distractor_sound]
     
-    # @property
-    # def current_noise_sound(self):
-    #     return self._source_sound_dict[self._current_noise_sound]
+    @property
+    def current_noise_sound(self):
+        return self._source_sound_dict[self._current_noise_sound]
 
     @property
-    # TODO: modify this function under condition with distractor sound and noise sound
     def is_silent(self):
         if self._episode_step_count < self._offset or self._episode_step_count > self._duration + self._offset:
             return True
@@ -392,10 +387,14 @@ class SoundEventNavSim(Simulator, ABC):
         return self._sim.get_agent(agent_id)
     
     def _get_random_duration(self, mean, upper, lower):
-        sigma = max(np.abs(mean - upper), np.abs(mean - lower))
+        sigma = min(np.abs(mean - upper), np.abs(mean - lower)) / 2
         duration = int(np.abs(np.random.normal(mean, sigma)))
         if duration == 0:
             duration = 1
+        elif duration > upper:
+            duration = upper
+        elif duration < lower:
+            duration = lower
         return duration
 
     def _generate_sound_intervals(
@@ -417,8 +416,6 @@ class SoundEventNavSim(Simulator, ABC):
         if len(sound_intervals) < 500:
             sound_intervals.extend([0] * (500 - len(sound_intervals)))
 
-        # add another 0 for the last step to avoid the error
-        # IndexError: list index out of range
         sound_intervals.extend([0])
         
         return sound_intervals
@@ -440,13 +437,37 @@ class SoundEventNavSim(Simulator, ABC):
             self._audio_interval_upper_limit = int(self.config.AGENT_0.SOUND_INTERVAL_UPPER_LIMIT)
             self._audio_interval_lower_limit = int(self.config.AGENT_0.SOUND_INTERVAL_LOWER_LIMIT)
 
-        # TODO: add support for distractor sound and noise sound
-        # if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
-        #     if hasattr(self.config.AGENT_0, 'DISTRACTOR_INTERVAL_MEAN'):
-        #         self._distractor_offset = int(self.config.AGENT_0.DISTRACTOR_OFFSET)
-        #         self._distractor_interval_mean = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_MEAN)
-        #         self._distractor_interval_upper_limit = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_UPPER_LIMIT)
-        #         self._distractor_interval_lower_limit = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_LOWER_LIMIT)
+        if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
+            if hasattr(self.config.AGENT_0, 'DISTRACTOR_OFFSET'):
+                self._distractor_offset = int(self.config.AGENT_0.DISTRACTOR_OFFSET)
+            else:
+                self._distractor_offset = 0
+            if self.config.AUDIO.EVERLASTING:
+                self._distractor_duration = 500
+            else:
+                assert hasattr(self.config.AGENT_0, 'DISTRACTOR_DURATION')
+                self._distractor_duration = int(self.config.AGENT_0.DISTRACTOR_DURATION)
+
+            if hasattr(self.config.AGENT_0, 'DISTRACTOR_INTERVAL_MEAN'):
+                self._distractor_interval_mean = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_MEAN)
+                self._distractor_interval_upper_limit = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_UPPER_LIMIT)
+                self._distractor_interval_lower_limit = int(self.config.AGENT_0.DISTRACTOR_INTERVAL_LOWER_LIMIT)
+
+        if self.config.AUDIO.HAS_NOISE:
+            if hasattr(self.config.AGENT_0, 'NOISE_OFFSET'):
+                self._noise_offset = int(self.config.AGENT_0.NOISE_OFFSET)
+            else:
+                self._noise_offset = 0
+            if self.config.AUDIO.EVERLASTING:
+                self._noise_duration = 500
+            else:
+                assert hasattr(self.config.AGENT_0, 'NOISE_DURATION')
+                self._noise_duration = int(self.config.AGENT_0.NOISE_DURATION)
+
+            if hasattr(self.config.AGENT_0, 'NOISE_INTERVAL_MEAN'):
+                self._noise_interval_mean = int(self.config.AGENT_0.NOISE_INTERVAL_MEAN)
+                self._noise_interval_upper_limit = int(self.config.AGENT_0.NOISE_INTERVAL_UPPER_LIMIT)
+                self._noise_interval_lower_limit = int(self.config.AGENT_0.NOISE_INTERVAL_LOWER_LIMIT)
         
         self._audio_index = 0
         is_same_sound = config.AGENT_0.SOUND_ID == self._current_sound
@@ -488,7 +509,6 @@ class SoundEventNavSim(Simulator, ABC):
             logging.debug('Loaded scene {}'.format(self.current_scene_name))
 
             self.points, self.graph = load_metadata(self.metadata_dir)
-            # reduce the memory usage by removing the old mapping
             self._position_to_index_mapping = dict()
             for node in self.graph.nodes():
                 self._position_to_index_mapping[self.position_encoding(self.graph.nodes()[node]['point'])] = node
@@ -506,8 +526,6 @@ class SoundEventNavSim(Simulator, ABC):
             self._spectrogram_cache = dict()
 
         self._episode_step_count = 0
-        # print("SoundEventNavSim reconfigure episode_step_count")
-
         # set agent positions
         self._receiver_position_index = self._position_to_index(self.config.AGENT_0.START_POSITION)
         self._source_position_index = self._position_to_index(self.config.AGENT_0.GOAL_POSITION)
@@ -522,12 +540,49 @@ class SoundEventNavSim(Simulator, ABC):
             self.set_agent_state(list(self.graph.nodes[self._receiver_position_index]['point']),
                                  self.config.AGENT_0.START_ROTATION)
         
-        # TODO: add support for distractor sound and noise sound
-        # if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
-        #     self._distractor_position_index = self.config.AGENT_0.DISTRACTOR_POSITION_INDEX
-        #     self._current_distractor_sound = self.config.AGENT_0.DISTRACTOR_SOUND_ID
-        #     self._load_single_distractor_sound()
+        if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
+            self._distractor_audio_index = 0
+            is_same_distractor_sound = config.AGENT_0.DISTRACTOR_SOUND_ID == self._current_distractor_sound
+            if not is_same_distractor_sound:
+                self._current_distractor_sound = self.config.AGENT_0.DISTRACTOR_SOUND_ID
+                self._load_single_distractor_sound()
+                logging.debug("Switch to distractor sound {} with duration {} seconds".
+                              format(self._current_distractor_sound, self._distractor_duration))
+                
+            self._distractor_sound_interval_determine = self._generate_sound_intervals(
+                self._distractor_offset,
+                self._distractor_duration,
+                self._distractor_audio_length,
+                self._distractor_interval_mean,
+                self._distractor_interval_upper_limit,
+                self._distractor_interval_lower_limit
+            )
+            
+            self._distractor_position_index = self._position_to_index(self.config.AGENT_0.DISTRACTOR_POSITION)
 
+        if self.config.AUDIO.HAS_NOISE:
+            self._noise_audio_index = 0
+            is_same_noise_sound = config.AGENT_0.NOISE_SOUND_ID == self._current_noise_sound
+            if not is_same_noise_sound:
+                self._current_noise_sound = self.config.AGENT_0.NOISE_SOUND_ID
+                self._load_single_noise_sound()
+                logging.debug("Switch to noise sound {} with duration {} seconds".
+                              format(self._current_noise_sound, self._noise_duration)
+                )
+            self._noise_sound_interval_determine = self._generate_sound_intervals(
+                self._noise_offset,
+                self._noise_duration,
+                self._noise_audio_length,
+                self._noise_interval_mean,
+                self._noise_interval_upper_limit,
+                self._noise_interval_lower_limit
+            )
+            noise_positions = self.config.AGENT_0.NOISE_POSITIONS
+            noise_position_index = []
+            for noise_position in noise_positions:
+                noise_position_index.append(self._position_to_index(noise_position))
+            self._noise_position_index = noise_position_index
+        
         if self._use_oracle_planner:
             self._oracle_actions = self.compute_oracle_actions()
 
@@ -603,7 +658,6 @@ class SoundEventNavSim(Simulator, ABC):
         )
 
         self._previous_step_collided = False
-        # STOP: 0, FORWARD: 1, LEFT: 2, RIGHT: 2
         if action == HabitatSimActions.STOP:
             self._is_episode_active = False
         else:
@@ -655,7 +709,6 @@ class SoundEventNavSim(Simulator, ABC):
             self.set_agent_state(list(self.graph.nodes[self._receiver_position_index]['point']),
                                  quat_from_angle_axis(np.deg2rad(self._rotation_angle), np.array([0, 1, 0])))
         self._episode_step_count += 1
-        # print("SoundEventNavSim step episode_step_count_forward")
 
         # log debugging info
         logging.debug('After taking action {}, s,r: {}, {}, orientation: {}, location: {}'.format(
@@ -669,7 +722,6 @@ class SoundEventNavSim(Simulator, ABC):
 
         self._prev_sim_obs = sim_obs
         observations = self._sensor_suite.get_observations(sim_obs)
-        # print(observations)
         if self.config.CONTINUOUS_VIEW_CHANGE:
             observations['intermediate'] = intermediate_observations
 
@@ -709,21 +761,38 @@ class SoundEventNavSim(Simulator, ABC):
             self._source_sound_dict[sound] = audio_data
             self._audio_length = audio_data.shape[0] // self.config.AUDIO.RIR_SAMPLING_RATE
 
-    # def _load_single_distractor_sound(self):
-    #     if self._current_distractor_sound not in self._source_sound_dict:
-    #         audio_data, sr = librosa.load(os.path.join(self.distractor_sound_dir, self._current_distractor_sound),
-    #                                       sr=self.config.AUDIO.RIR_SAMPLING_RATE)
-    #         self._source_sound_dict[self._current_distractor_sound] = audio_data
-
     def _load_single_source_sound(self):
         if self._current_sound not in self._source_sound_dict:
             audio_data, sr = librosa.load(os.path.join(self.source_sound_dir, self._current_sound),
-                                          sr=self.config.AUDIO.RIR_SAMPLING_RATE)
+                                          sr=self.config.AUDIO.RIR_SAMPLING_RATE, mono=True)
             self._audio_length = audio_data.shape[0] // sr
             self._source_sound_dict[self._current_sound] = audio_data[: self._audio_length * sr]
         else:
             self._audio_length = self._source_sound_dict[self._current_sound].shape[0]//self.config.AUDIO.RIR_SAMPLING_RATE
         assert self._audio_length > 0, "Goal audio length shorter than 1s, not enough for convolve"
+
+
+    def _load_single_distractor_sound(self):
+        if self._current_distractor_sound not in self._source_sound_dict:
+            audio_data, sr = librosa.load(os.path.join(self.distractor_sound_dir, self._current_distractor_sound),
+                                          sr=self.config.AUDIO.RIR_SAMPLING_RATE, mono=True)
+            self._distractor_audio_length = audio_data.shape[0] // sr
+            self._source_sound_dict[self._current_distractor_sound] = audio_data[: self._distractor_audio_length * sr]
+        else:
+            self._distractor_audio_length = self._source_sound_dict[self._current_distractor_sound].shape[0]//self.config.AUDIO.RIR_SAMPLING_RATE
+        assert self._distractor_audio_length > 0, "Distractor audio length shorter than 1s, not enough for convolve"
+
+
+    def _load_single_noise_sound(self):
+        if self._current_noise_sound not in self._source_sound_dict:
+            audio_data, sr = librosa.load(os.path.join(self.noise_sound_dir, self._current_noise_sound),
+                                          sr=self.config.AUDIO.RIR_SAMPLING_RATE, mono=True)
+            self._noise_audio_length = audio_data.shape[0] // sr
+            self._source_sound_dict[self._current_noise_sound] = audio_data[: self._noise_audio_length * sr]
+        else:
+            self._noise_audio_length = self._source_sound_dict[self._current_noise_sound].shape[0]//self.config.AUDIO.RIR_SAMPLING_RATE
+        assert self._noise_audio_length > 0, "Noise audio length shorter than 1s, not enough for convolve"
+
 
     def _compute_euclidean_distance_between_sr_locations(self):
         p1 = self.graph.nodes[self._receiver_position_index]['point']
@@ -735,33 +804,25 @@ class SoundEventNavSim(Simulator, ABC):
         sr = self.config.AUDIO.RIR_SAMPLING_RATE
         step_idx = self._episode_step_count
 
-        if self.config.AUDIO.TYPE == "binaural":
+        if self.config.AUDIO.TYPE in ["binaural", "diff", "diff_gd"]:
             nb_channel = 2
             cache_rir_path = self.binaural_rir_dir
-        elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
-            nb_channel = 4
-            cache_rir_path = self.ambisonic_rir_dir
         else:
             raise ValueError("Unknown audio type")
 
+        if self.config.AUDIO.TYPE == "none":
+            return np.zeros((nb_channel, sr))
+        
         if (
             step_idx < self._offset or 
             step_idx > self._offset + self._duration
         ):
-            # print("SoundEventNavSim _compute_audiogoal slient: {}".format(step_idx))
             audiogoal = np.zeros((nb_channel, sr))
         else:
             if self.config.USE_RENDERED_OBSERVATIONS:
-                if self.config.AUDIO.TYPE == "binaural":
+                if self.config.AUDIO.TYPE in ["binaural", "diff", "diff_gd"]:
                     rir_file = os.path.join(cache_rir_path, 
                                                     str(self.azimuth_angle), 
-                                                    "{}_{}.wav".format(
-                                                        self._receiver_position_index,
-                                                        self._source_position_index,
-                                                    ))
-                elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
-                    rir_file = os.path.join(cache_rir_path, 
-                                                    "irs",
                                                     "{}_{}.wav".format(
                                                         self._receiver_position_index,
                                                         self._source_position_index,
@@ -772,31 +833,20 @@ class SoundEventNavSim(Simulator, ABC):
                 try:
                     sampling_freq, rir = wavfile.read(rir_file)
                 except ValueError:
-                    # logging.warning("{} file is not readable".format(rir_file))
                     logging.exception("{} file is not readable".format(rir_file))
                     rir = np.zeros((sr, nb_channel))
                 if len(rir) == 0:
-                    # logging.warning("Empty RIR file at {}".format(rir_file))
-                    # rir = np.zeros((sr, nb_channel))
-                    if self.config.AUDIO.TYPE == "mel_foa_iv_5len":
-                        rir = np.zeros((sr, nb_channel))
-                    elif self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "binaural"]:
-                        audiogoal = np.zeros((nb_channel, sr))
-                        return audiogoal
-
-                if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
-                    angle = self.azimuth_angle_ambisonic
-                    rir = rotate_sh(rir[:, :4], angle, 0, 0)
+                    rir = np.zeros((sr, nb_channel))
                 
             else:
+                audio_sensor = self._sim.get_agent(0)._sensors["audio_sensor"]
+                audio_sensor.setAudioSourceTransform(np.array(self.config.AGENT_0.GOAL_POSITION) + np.array([0, 1.5, 0]))
                 rir = np.transpose(np.array(self._sim.get_sensor_observations()["audio_sensor"]))
             
             rir_len = rir.shape[0]
             rir_time_ceil = rir_len // sr + 1
-            # print("SoundEventNavSim _compute_audiogoal rir_len: {}".format(rir_time_ceil))
 
             audio_idx = self._audio_index
-            # print("SoundEventNavSim _compute_audiogoal audio_idx: {}".format(audio_idx))
             if self._audio_interval_determine[step_idx] == 1:
                 self._audio_index = (self._audio_index + 1) % self._audio_length
 
@@ -806,53 +856,195 @@ class SoundEventNavSim(Simulator, ABC):
             else:
                 zero_padding = np.zeros(1, )
                 index = rir_time_ceil
-            # print("SoundEventNavSim _compute_audiogoal index: {}".format(index))
                 
             goal_sound = np.zeros(1, )
             while index >= 0:
-                # print("SoundEventNavSim _compute_audiogoal determine: {}".format(self._audio_interval_determine[step_idx]))
                 if self._audio_interval_determine[step_idx] == 1:
-                    # print("SoundEventNavSim _compute_audiogoal audio_idx: {}".format(audio_idx))
                     if audio_idx != -1:
                         step_sound = self.current_source_sound[audio_idx * sr : (audio_idx + 1) * sr]
                     else:
                         step_sound = self.current_source_sound[audio_idx * sr : self._audio_length * sr]
                     audio_idx -= 1
-                    # print("SoundEventNavSim _compute_audiogoal has_sound: {}".format(audio_idx))
                     if np.abs(audio_idx) >= self._audio_length:
                         audio_idx = 0
                 else:
                     step_sound = np.zeros(sr, )
-                    # print("SoundEventNavSim _compute_audiogoal slient: {}".format(audio_idx))
 
                 index -= 1
                 step_idx -= 1
                 goal_sound = np.concatenate([step_sound, goal_sound])
-                # print("SoundEventNavSim _compute_audiogoal goal_sound1: {}".format(goal_sound.shape))
 
             goal_sound = np.concatenate([zero_padding, goal_sound])
-            # print("SoundEventNavSim _compute_audiogoal goal_sound2: {}".format(goal_sound.shape))
             goal_sound = goal_sound[-(sr + rir_len) : -1]
-            # print("SoundEventNavSim _compute_audiogoal goal_sound3: {}".format(goal_sound.shape))
             
             audiogoal = np.array([
                 fftconvolve(goal_sound, rir[:, channel], mode='valid')
                 for channel in range(nb_channel)
             ])
+        
+        # add distractor sound to audiogoal
+        if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
+            if (
+                step_idx < self._distractor_offset or 
+                step_idx > self._distractor_offset + self._distractor_duration
+            ):
+                distractor_audiogoal = np.zeros((nb_channel, sr))
+            else:
+                if self.config.USE_RENDERED_OBSERVATIONS:
+                    if self.config.AUDIO.TYPE in ["binaural", "diff", "diff_gd"]:
+                        rir_file = os.path.join(cache_rir_path, 
+                                                        str(self.azimuth_angle), 
+                                                        "{}_{}.wav".format(
+                                                            self._receiver_position_index,
+                                                            self._distractor_position_index,
+                                                        ))
+                    else:
+                        raise ValueError("Unknown audio type {}".format(self.config.AUDIO.TYPE))
 
-            if self.config.AUDIO.TYPE in ["ambisonic", "mel_foa_iv", "mel_foa_iv_5len"]:
-                # convert ACN/N3D format to ACN/SN3D format
-                # audiogoal = np.array([
-                #     audiogoal[0, :],
-                #     audiogoal[1, :] / sqrt(3),
-                #     audiogoal[2, :] / sqrt(3),
-                #     audiogoal[3, :] / sqrt(3),
-                # ])
-                audiogoal = audiogoal / np.array([1, sqrt(3), sqrt(3), sqrt(3)]).reshape(-1, 1)
+                    try:
+                        sampling_freq, rir = wavfile.read(rir_file)
+                    except ValueError:
+                        logging.exception("{} file is not readable".format(rir_file))
+                        rir = np.zeros((sr, nb_channel))
+                    if len(rir) == 0:
+                        rir = np.zeros((sr, nb_channel))
+                    
+                else:
+                    audio_sensor = self._sim.get_agent(0)._sensors["audio_sensor"]
+                    audio_sensor.setAudioSourceTransform(np.array(self.config.AGENT_0.DISTRACTOR_POSITION) + np.array([0, 1.5, 0]))
+                    rir = np.transpose(np.array(self._sim.get_sensor_observations()["audio_sensor"]))
+                
+                rir_len = rir.shape[0]
+                rir_time_ceil = rir_len // sr + 1
+
+                distractor_audio_idx = self._distractor_audio_index
+                if self._distractor_sound_interval_determine[step_idx] == 1:
+                    self._distractor_audio_index = (self._distractor_audio_index + 1) % self._distractor_audio_length
+
+                if step_idx * sr - rir_len < 0:
+                    zero_padding = np.zeros(rir_len - step_idx * sr + 1, )
+                    index = step_idx
+                else:
+                    zero_padding = np.zeros(1, )
+                    index = rir_time_ceil
+
+                distractor_sound = np.zeros(1, )
+                while index >= 0:
+                    if self._distractor_sound_interval_determine[step_idx] == 1:
+                        if distractor_audio_idx != -1:
+                            step_sound = self.current_distractor_sound[distractor_audio_idx * sr : (distractor_audio_idx + 1) * sr]
+                        else:
+                            step_sound = self.current_distractor_sound[distractor_audio_idx * sr : self._distractor_audio_length * sr]
+                        distractor_audio_idx -= 1
+                        if np.abs(distractor_audio_idx) >= self._distractor_audio_length:
+                            distractor_audio_idx = 0
+                    else:
+                        step_sound = np.zeros(sr, )
+
+                    index -= 1
+                    step_idx -= 1
+                    distractor_sound = np.concatenate([step_sound, distractor_sound])
+
+                distractor_sound = np.concatenate([zero_padding, distractor_sound])
+                distractor_sound = distractor_sound[-(sr + rir_len) : -1]
+                distractor_audiogoal = np.array([
+                    fftconvolve(distractor_sound, rir[:, channel], mode='valid')
+                    for channel in range(nb_channel)
+                ])
+
+                audiogoal = audiogoal + distractor_audiogoal
+        
+        if self.config.AUDIO.HAS_NOISE:
+            if (
+                step_idx < self._noise_offset or 
+                step_idx > self._noise_offset + self._noise_duration
+            ):
+                noise_audiogoal = np.zeros((nb_channel, sr))
+            else:
+                rir_list = []
+                if self.config.USE_RENDERED_OBSERVATIONS:
+                    for noise_position_index in self._noise_position_index:
+                        if self.config.AUDIO.TYPE in ["binaural", "diff", "diff_gd"]:
+                            rir_file = os.path.join(cache_rir_path, 
+                                                            str(self.azimuth_angle), 
+                                                            "{}_{}.wav".format(
+                                                                self._receiver_position_index,
+                                                                noise_position_index,
+                                                            ))
+                        else:
+                            raise ValueError("Unknown audio type {}".format(self.config.AUDIO.TYPE))
+
+                        zero_rir = False
+                        try:
+                            sampling_freq, rir = wavfile.read(rir_file)
+                        except ValueError:
+                            logging.exception("{} file is not readable".format(rir_file))
+                            rir = np.zeros((sr, nb_channel))
+                            zero_rir = True
+                        except FileNotFoundError:
+                            logging.warning("{} file not found".format(rir_file))
+                            rir = np.zeros((sr, nb_channel))
+                            zero_rir = True
+                        if len(rir) == 0:
+                            rir = np.zeros((sr, nb_channel))
+                            zero_rir = True
+
+                        rir_list.append((rir, zero_rir))   
+                else:
+                    audio_sensor = self._sim.get_agent(0)._sensors["audio_sensor"]
+                    for noise_position_index in self._noise_position_index:
+                        audio_sensor.setAudioSourceTransform(np.array(noise_position_index) + np.array([0, 1.5, 0]))
+                        rir = np.transpose(np.array(self._sim.get_sensor_observations()["audio_sensor"]))
+                        rir_is_zero = np.all(rir == 0)
+                        rir_list.append((rir, rir_is_zero))
+                
+                for rir, is_zero in rir_list:
+                    if is_zero:
+                        continue
+                    
+                    rir_len = rir.shape[0]
+                    rir_time_ceil = rir_len // sr + 1
+
+                    noise_audio_idx = self._noise_audio_index
+                    if self._noise_sound_interval_determine[step_idx] == 1:
+                        self._noise_audio_index = (self._noise_audio_index + 1) % self._noise_audio_length
+
+                    if step_idx * sr - rir_len < 0:
+                        zero_padding = np.zeros(rir_len - step_idx * sr + 1, )
+                        index = step_idx
+                    else:
+                        zero_padding = np.zeros(1, )
+                        index = rir_time_ceil
+
+                    noise_sound = np.zeros(1, )
+                    while index >= 0:
+                        if self._noise_sound_interval_determine[step_idx] == 1:
+                            if noise_audio_idx != -1:
+                                step_sound = self.current_noise_sound[noise_audio_idx * sr : (noise_audio_idx + 1) * sr]
+                            else:
+                                step_sound = self.current_noise_sound[noise_audio_idx * sr : self._noise_audio_length * sr]
+                            noise_audio_idx -= 1
+                            if np.abs(noise_audio_idx) >= self._noise_audio_length:
+                                noise_audio_idx = 0
+                        else:
+                            step_sound = np.zeros(sr, )
+
+                        index -= 1
+                        step_idx -= 1
+                        noise_sound = np.concatenate([step_sound, noise_sound])
+
+                    noise_sound = np.concatenate([zero_padding, noise_sound])
+                    noise_sound = noise_sound[-(sr + rir_len) : -1]
+                    noise_audiogoal = np.array([
+                        fftconvolve(noise_sound, rir[:, channel], mode='valid')
+                        for channel in range(nb_channel)
+                    ])
+
+                    audiogoal = audiogoal + noise_audiogoal
         
         audiogoal = audiogoal + self._eps
 
-        if self.config.AUDIO.TYPE == "mel_foa_iv_5len":
+        if self.config.AUDIO.TYPE in ["diff_gd"]:
             if len(self._audio_buffer) == 0:
                 for _ in range(5):
                     self._audio_buffer.append(np.zeros((nb_channel, sr)))
@@ -861,6 +1053,7 @@ class SoundEventNavSim(Simulator, ABC):
             audiogoal = np.concatenate(self._audio_buffer, axis=1)
 
         return audiogoal
+
 
     def get_egomap_observation(self):
         joint_index = (self._receiver_position_index, self._rotation_angle)
@@ -872,8 +1065,8 @@ class SoundEventNavSim(Simulator, ABC):
     def cache_egomap_observation(self, egomap):
         self._egomap_cache[self._current_scene][(self._receiver_position_index, self._rotation_angle)] = egomap
 
+
     def get_current_audiogoal_observation(self):
-        # print("SoundEventNavSim get_current_audiogoal_observation")
         if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
             # by default, does not cache for distractor sound
             audiogoal = self._compute_audiogoal()
@@ -884,6 +1077,7 @@ class SoundEventNavSim(Simulator, ABC):
             audiogoal = self._audiogoal_cache[joint_index]
 
         return audiogoal
+
 
     def get_current_spectrogram_observation(self, audiogoal2spectrogram):
         if self.config.AUDIO.HAS_DISTRACTOR_SOUND:
@@ -897,6 +1091,7 @@ class SoundEventNavSim(Simulator, ABC):
             spectrogram = self._spectrogram_cache[joint_index]
 
         return spectrogram
+
 
     def geodesic_distance(self, position_a, position_bs, episode=None):
         distances = []
@@ -917,6 +1112,7 @@ class SoundEventNavSim(Simulator, ABC):
         else:
             raise ValueError("Min distance is inf")
 
+
     def get_straight_shortest_path_points(self, position_a, position_b):
         index_a = self._position_to_index(position_a)
         index_b = self._position_to_index(position_b)
@@ -927,6 +1123,7 @@ class SoundEventNavSim(Simulator, ABC):
         for node in shortest_path:
             points.append(self.graph.nodes()[node]['point'])
         return points
+
 
     def compute_oracle_actions(self):
         start_node = self._receiver_position_index
@@ -959,8 +1156,10 @@ class SoundEventNavSim(Simulator, ABC):
         oracle_actions.append(HabitatSimActions.STOP)
         return oracle_actions
 
+
     def get_oracle_action(self):
         return self._oracle_actions[self._episode_step_count]
+
 
     @property
     def previous_step_collided(self):

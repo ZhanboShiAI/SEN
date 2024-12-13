@@ -1,8 +1,0 @@
-setup.py
-sen/__init__.py
-sen/simulator.py
-sen.egg-info/PKG-INFO
-sen.egg-info/SOURCES.txt
-sen.egg-info/dependency_links.txt
-sen.egg-info/requires.txt
-sen.egg-info/top_level.txt

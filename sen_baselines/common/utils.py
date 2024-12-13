@@ -1,23 +1,13 @@
-#!/usr/bin/env python3
-
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 import glob
 import os
 from collections import defaultdict
 from typing import Dict, List, Optional
-import random
 import copy
 import numbers
 import json
 
 import numpy as np
 import cv2
-from scipy.io import wavfile
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
@@ -37,65 +27,10 @@ class Flatten(nn.Module):
     def forward(self, x):
         return x.reshape(x.size(0), -1)
 
-# torch.distributions.Categorical是概率分布模块之一. 创建一个由概率或对数概率参数化的分类分布
-# 用于生成随机的离散型输出. 当输入是概率时，Categorical 会将其规范化为总和为 1 的概率向量，
-# 如果输入是对数概率，Categorical 会将其转化为概率向量并规范化。
-# 在实际应用中, 可以使用 Categorical 实例的 sample() 方法来生成随机样本，使用 log_prob() 方法计算该样本的对数概率
-# Categorical可以接受'probs'或'logits'两种输入, 但是同时只能有一个输入
-# 前者表示一个归一化的概率分布, 即非负的, 有限的, 有非零和的, 沿最后一个维度可以被归一化, 如[0.1, 0.4, 0.5]
-# 后者表示未归一化的对数分布, 可以是任意实数, 如np.log([0.1, 0.5, 0.4], 输入会被自动转化为归一化的概率分布
-# 值得注意的是, 在pytorch中, logits的实现与标准logits函数不同, 而是其反函数. 
-# 这表示如果向在torch中计算logits, 只需要简单的将未归一化的概率分布作为logits参数传入
-
-# 如果probs是一维的, 长度为K, 那么每一个元素是其相应index的概率
-# 如果probs是N维的, 前N-1维被视为一批相对概率向量, 其中每一个向量代表一个特定事件或结果的一组概率
-# 假设probs是(3*4*5*4), 那么每一个(3*4*5)的向量表示某一个特定事件或者结果的一组概率, 4个这样的向量的所有概率加起来为1
-# probs沿最后一个维度的和为1, 即最后一个维度表示的是概率分布, 前面N-1个维度是每一个概率对应的action?
-
-'''
-probs = torch.tensor([
-    [[0.1, 0.2, 0.7], [0.3, 0.3, 0.4]],
-    [[0.4, 0.4, 0.2], [0.2, 0.5, 0.3]],
-    [[0.2, 0.5, 0.3], [0.1, 0.1, 0.8]],
-    [[1.0, 0.0, 0.0], [0.1, 0.1, 0.8]]
-])  # shape: (4, 2, 3)
-# 这个形状可以理解为: batch_size是4, 一次输入四个
-# senquence_length是2, 一个batch中有两个序列
-# 每一个序列是一个概率分布函数, 这个分布表明有3中class, 其和为1, 这就是前面说的沿最后一个维度和为1
-
-categorical_dist = Categorical(probs=probs)
-
-print(categorical_dist.sample())
-# tensor([[2, 0],
-#         [1, 1],
-#         [2, 2],
-#         [0, 2]])
-# 采样相当于对每一个batch和每一个sequence都采样一次
-print(categorical_dist.entropy())
-# tensor([[8.0182e-01, 1.0889e+00],
-#         [1.0549e+00, 1.0297e+00],
-#         [1.0297e+00, 6.3903e-01],
-#         [1.1921e-07, 6.3903e-01]])
-# 熵就是计算每一个分布的熵
-print(categorical_dist.entropy().mean())
-# tensor(0.7854)
-# 求平均就是计算这一个batch的熵的平均
-'''
-
-# 这里的输入应该就是一个一维的概率分布, mean()可有可无
-# 输出来确定下
-
 class CustomFixedCategorical(torch.distributions.Categorical):
     def sample(self, sample_shape=torch.Size()):
-        # unsqueeze在tensor的末尾添加一个size为1的新维度
-        # sample_shape是一个optional的变量, 用于指定采样的维度
-        # 如果没有指定这个参数, 返回的tensor的大小是torch.Size()
         return super().sample(sample_shape).unsqueeze(-1)
 
-    # 以actions这个tensor作为输入, 并返回所有action的对数几率之和. 
-    # 首先除去actions中所有维度为1的维度, 然后计算其对数概率
-    # 再将得到的tensor转化为 actions.size(0) 行, num_outputs 列的2D tensor
-    # sum运算逐行进行. 最后一个大小为1的新维度被添加到tensor的末尾
     def log_probs(self, actions):
         return (
             super()
@@ -105,7 +40,6 @@ class CustomFixedCategorical(torch.distributions.Categorical):
             .unsqueeze(-1)
         )
 
-    # 返回最可能的action的index
     def mode(self):
         return self.probs.argmax(dim=-1, keepdim=True)
 
@@ -113,19 +47,12 @@ class CustomFixedCategorical(torch.distributions.Categorical):
 class CategoricalNet(nn.Module):
     def __init__(self, num_inputs, num_outputs):
         super().__init__()
-
-        # 一个线性层
-        # Applies a linear transformation to the incoming data: :math:`y = xA^T + b`
         self.linear = nn.Linear(num_inputs, num_outputs)
-        # 线性层的权重使用orthogonal initialization with a gain of 0.01
-        # bias is initialized to zero.
         nn.init.orthogonal_(self.linear.weight, gain=0.01)
         nn.init.constant_(self.linear.bias, 0)
 
     def forward(self, x):
         x = self.linear(x)
-        # logits是线性层的输出, 也就是说, 分类网络由一个线性层和一个对数分类层组成
-        # 这一步其实就是计算x的logits函数
         return CustomFixedCategorical(logits=x)
 
 
@@ -183,70 +110,23 @@ def to_tensor(v):
         return torch.tensor(v, dtype=torch.float)
 
 
-# def batch_obs(
-#     observations: List[Dict], device: Optional[torch.device] = None, skip_list = []
-# ) -> Dict[str, torch.Tensor]:
-#     r"""Transpose a batch of observation dicts to a dict of batched
-#     observations.
-
-#     Args:
-#         observations:  list of dicts of observations.
-#         device: The torch.device to put the resulting tensors on.
-#             Will not move the tensors if None
-
-#     Returns:
-#         transposed dict of lists of observations.
-#     """
-#     batch = defaultdict(list)
-
-#     for obs in observations:
-#         for sensor in obs:
-#             if sensor in skip_list:
-#                 continue
-#             batch[sensor].append(to_tensor(obs[sensor]).float())
-
-#     for sensor in batch:
-#         batch[sensor] = torch.stack(batch[sensor], dim=0).to(
-#             device=device, dtype=torch.float
-#         )
-
-#     return batch
-
 def batch_obs(
     observations: List[Dict], device: Optional[torch.device] = None, skip_list = []
 ) -> Dict[str, torch.Tensor]:
-    # 将一个观测值字典的列表转化为一个字典
     batch = defaultdict(list)
-    # 对于一个batch中的每一个observation
     for obs in observations:
-        # 对于observation中的每一个sensor
         for sensor in obs:
             if sensor in skip_list:
                 continue
-            # 将sensor添加到字典中. 
-
-            # remove the last dimension of depth and rgb sensor
-            # if the number of dimensions is 4 like (HEIGHT x WIDTH x CHANNEL x 1)
-            # caused by some version dismatch
             if sensor in ["depth", "rgb"] and len(obs[sensor].shape) == 4:
                 obs[sensor] = obs[sensor].squeeze(-1)
 
             batch[sensor].append(to_tensor(obs[sensor]).float())
-    # 这里list的长度应该是4, 对应的num_processes
-    # print("++++++++++++++++++++++++")
-    # print("Utils Batch Observations")
-    # 直接使用batch[0]会导致stack报错, 应该是引入了错误的key
-    # print("Utils Batch Observation Size: ", len(batch[0]))
-    # for sensor in batch:
-    #     print("Utils Batch Observation Size: ", len(batch[sensor]))
-    # 经过测试, 这里输出的是4, 即num_processes的值
-    
-    # 将list在第0维压缩, 即把list压缩成一个tensor
+   
     for sensor in batch:
         batch[sensor] = torch.stack(batch[sensor], dim=0).to(
             device=device, dtype=torch.float
         )
-
 
     return batch
 
@@ -502,20 +382,16 @@ def image_resize_shortest_edge(
     if len(img.shape) < 3 or len(img.shape) > 5:
         raise NotImplementedError()
     if no_batch_dim:
-        img = img.unsqueeze(0)  # Adds a batch dimension
+        img = img.unsqueeze(0)
     if channels_last:
         h, w = img.shape[-3:-1]
         if len(img.shape) == 4:
-            # NHWC -> NCHW
             img = img.permute(0, 3, 1, 2)
         else:
-            # NDHWC -> NDCHW
             img = img.permute(0, 1, 4, 2, 3)
     else:
-        # ..HW
         h, w = img.shape[-2:]
 
-    # Percentage resize
     scale = size / min(h, w)
     h = int(h * scale)
     w = int(w * scale)
@@ -524,13 +400,11 @@ def image_resize_shortest_edge(
     ).to(dtype=img.dtype)
     if channels_last:
         if len(img.shape) == 4:
-            # NCHW -> NHWC
             img = img.permute(0, 2, 3, 1)
         else:
-            # NDCHW -> NDHWC
             img = img.permute(0, 1, 3, 4, 2)
     if no_batch_dim:
-        img = img.squeeze(dim=0)  # Removes the batch dimension
+        img = img.squeeze(dim=0)
     return img
 
 
@@ -545,10 +419,8 @@ def center_crop(img, size, channels_last: bool = False):
         the resized array
     """
     if channels_last:
-        # NHWC
         h, w = img.shape[-3:-1]
     else:
-        # NCHW
         h, w = img.shape[-2:]
 
     if isinstance(size, numbers.Number):
@@ -605,7 +477,6 @@ def observations_to_image(observation: Dict, info: Dict, pred=None) -> np.ndarra
 
         egocentric_view.append(rgb)
 
-    # draw depth map if observation has depth info
     if "depth" in observation:
         observation_size = observation["depth"].shape[0]
         depth_map = observation["depth"].squeeze() * 255.0
@@ -621,7 +492,6 @@ def observations_to_image(observation: Dict, info: Dict, pred=None) -> np.ndarra
     ), "Expected at least one visual sensor enabled."
     egocentric_view = np.concatenate(egocentric_view, axis=1)
 
-    # draw collision
     if "collisions" in info and info["collisions"]["is_collision"]:
         egocentric_view = draw_collision(egocentric_view)
 
@@ -641,15 +511,11 @@ def observations_to_image(observation: Dict, info: Dict, pred=None) -> np.ndarra
         )
         if pred is not None:
             from habitat.utils.geometry_utils import quaternion_rotate_vector
-
-            # current_position = sim.get_agent_state().position
-            # agent_state = sim.get_agent_state()
             source_rotation = info["top_down_map"]["agent_rotation"]
 
             rounded_pred = np.round(pred[1])
             direction_vector_agent = np.array([rounded_pred[1], 0, -rounded_pred[0]])
             direction_vector = quaternion_rotate_vector(source_rotation, direction_vector_agent)
-            # pred_goal_location = source_position + direction_vector.astype(np.float32)
 
             grid_size = (
                 (maps.COORDINATE_MAX - maps.COORDINATE_MIN) / 10000,
@@ -672,19 +538,16 @@ def observations_to_image(observation: Dict, info: Dict, pred=None) -> np.ndarra
         if top_down_map.shape[0] > top_down_map.shape[1]:
             top_down_map = np.rot90(top_down_map, 1)
 
-        # scale top down map to align with rgb view
         if pred is None:
             old_h, old_w, _ = top_down_map.shape
             top_down_height = observation_size
             top_down_width = int(float(top_down_height) / old_h * old_w)
-            # cv2 resize (dsize is width first)
             top_down_map = cv2.resize(
                 top_down_map.astype(np.float32),
                 (top_down_width, top_down_height),
                 interpolation=cv2.INTER_CUBIC,
             )
         else:
-            # draw label
             CATEGORY_INDEX_MAPPING = {
                 'chair': 0,
                 'table': 1,
@@ -715,7 +578,6 @@ def observations_to_image(observation: Dict, info: Dict, pred=None) -> np.ndarra
             old_h, old_w, _ = top_down_map.shape
             top_down_height = observation_size - text_height
             top_down_width = int(float(top_down_height) / old_h * old_w)
-            # cv2 resize (dsize is width first)
             top_down_map = cv2.resize(
                 top_down_map.astype(np.float32),
                 (top_down_width, top_down_height),
