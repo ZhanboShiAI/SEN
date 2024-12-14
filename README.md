@@ -18,8 +18,14 @@
 ## Motivation
 Audio-visual navigation has received considerable attention in recent years. However, the majority of related investigations have focused on single sound-source scenarios. Studies in this field for multiple sound-source scenarios remain underexplored due to the limitations of two aspects. First, the existing audio-visual navigation dataset only has limited audio samples, making it difficult to simulate diverse multiple sound-source environments. Second, existing navigation frameworks are mainly designed for single sound-source scenarios, thus their performance is severely reduced in multiple sound-source scenarios. To fill in these two research gaps to some extent, we establish a large-scale audio dataset named **BeDAViN** and propose a new embodied navigation framework called **ENMuS<sup>3</sup>**.
 
-## Citing
+## Citation
+If you use our audio dataset or our navigation framework in your research, please cite the following [paper]():
+```
 Coming Soon
+```
+
+## Appendix
+The appendix of our paper can be found [here]().
 
 ## Environment Installation
 This project is developed with Python 3.9 on Ubuntu 22.04. If you are using [miniconda](https://docs.conda.io/en/latest/miniconda.html) or [anaconda](https://anaconda.org/), you can create an environment with following instructions. 
