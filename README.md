@@ -75,6 +75,7 @@ Matterport3D (MP3D) scene reconstructions are used. The official Matterport3D do
 Room impulse response dataset is used for audio synthesis. You can download this dataset following the instructions [here](https://github.com/facebookresearch/sound-spaces/blob/main/soundspaces/README.md).
 
 **Audio Dataset**
+
 The Audio dataset used in this project from three parts, our manual recorded audio files, audio samples selected from [AudioSet](https://research.google.com/audioset/) and [Freesound](https://annotator.freesound.org/). Our processed audio wavfiles are saved under `data` directory of the current github repository. The raw 24 bit audio recordings with a sampling rate of 96,000 Hz can be found [here](). As for the audio samples from AudioSet and Freesound, you can collect them using `a.py` and `b.py` scripts. 
 
 **Data Folder Structure**
