@@ -74,7 +74,7 @@ def main():
     parser.add_argument(
         "--decoder-type",
         type=str,
-        default='FSMCF',
+        default='MSMT',
         help="Decoder type",
     )
     parser.add_argument(
